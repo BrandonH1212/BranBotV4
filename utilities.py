@@ -1,6 +1,5 @@
 from ossapi import OssapiAsync, Scope, Beatmap, User, Score, GameMode
 from config import config
-from typing import Optional
 
 
 def get_osu_api() -> OssapiAsync:
@@ -14,3 +13,4 @@ async def get_osu_user(name_or_id: str) -> User:
         return user
     except Exception as e:
         return None
+    
