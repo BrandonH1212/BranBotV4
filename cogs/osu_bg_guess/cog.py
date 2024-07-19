@@ -51,12 +51,9 @@ class RegisterModal(discord.ui.Modal):
         
         for i in range(0,(user.beatmap_playcounts_count) // 100):
             user_beatmaps += await api.user_beatmaps(user.id, limit=100, type="most_played", offset=i*100)
-        
-        #user_beatmaps += await api.user_beatmaps(user.id, limit=100, type="favourite")
             
         map_ids = [(beatmap.beatmap_id, beatmap.beatmapset.id) for beatmap in user_beatmaps]
 
-        #game_db.add_maps_batch(map_ids)
         game_db.add_play_history_batch([(user.id, beatmap.beatmapset.id) for beatmap in user_beatmaps])
         
         print(f"Added {len(map_ids)} maps to the database")
@@ -108,10 +105,9 @@ class SignUpView(discord.ui.View):
             return await interaction.response.send_message("You are not the host", ephemeral=True)
         else:
             #await interaction.response.send_message("Starting game")
-            #osu_ids = game_db.get_osu_ids_from_discord([player[0] for player in self.players if player[1]])
-            #common_maps = game_db.get_common_maps(osu_ids)
-            #common_sets = [mapset for _, mapset in common_maps]
-            common_sets = game_db.get_all_sets()
+            osu_ids = game_db.get_osu_ids_from_discord(list(self.players.keys()))
+            common_sets = game_db.get_common_sets(osu_ids)
+            
             print(f"Starting game with {len(common_sets)} mapsets")
             
             game_view = GameView(set(self.players.keys()), common_sets, self.message)
@@ -137,6 +133,20 @@ class GameView(discord.ui.View):
         self.real_index = 0
         self.player_guesses = {} # {player_id: guess}
         self.player_points = {player_id: 0 for player_id in players}
+        self.create_buttons()
+        
+
+    async def button_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
+            guess = int(interaction.data['custom_id'])
+            await self.player_guess(interaction.user.id, guess)
+            
+    def create_buttons(self):
+        for i in range(6):
+            button = discord.ui.Button(label=str(i + 1), style=discord.ButtonStyle.primary, row=i // 3, custom_id=str(i))
+            button.callback = self.button_callback
+            self.add_item(button)
     
     
     def get_embed(self, show_guesses=False, add_time=False):
@@ -206,7 +216,7 @@ class GameView(discord.ui.View):
         
         self.state = "player_guesses"
         round = self.round
-        await asyncio.sleep(30 - (upload_end - upload_start))
+        await asyncio.sleep((30 - (upload_end - upload_start)) + 0.5)
         if self.round == round:
             self.state = "showing_answers"
             await self.show_answers()
@@ -245,9 +255,9 @@ class GameView(discord.ui.View):
             b.disabled = True
             
         
-        await self.message.edit(embed=self.get_embed(True), view=self)
+        await self.message.edit(embed=self.get_embed(show_guesses=True), view=self)
         
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
         
         if self.round < self.max_rounds:
             await self.next_round()
@@ -256,49 +266,8 @@ class GameView(discord.ui.View):
     
     
     def end_game(self):
-        display = "\n".join([f"<@{player}>: {points}" for player, points in self.player_points.items()])
-        embed = Embed(title="Game Over", description=display)
-        self.message.edit(embed=embed, view=None)
+        self.message.edit(embed=self.get_embed(), view=None)
         
-            
-    @discord.ui.button(label="1", style=discord.ButtonStyle.primary, row=1)
-    async def button1_callback(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
-            await self.player_guess(interaction.user.id, 0)
-            
-    
-    @discord.ui.button(label="2", style=discord.ButtonStyle.primary, row=1)
-    async def button2_callback(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
-            await self.player_guess(interaction.user.id, 1)
-        
-    
-    @discord.ui.button(label="3", style=discord.ButtonStyle.primary, row=1)
-    async def button3_callback(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
-            await self.player_guess(interaction.user.id, 2)
-    
-    @discord.ui.button(label="4", style=discord.ButtonStyle.primary, row=2)
-    async def button4_callback(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
-            await self.player_guess(interaction.user.id, 3)
-    
-    @discord.ui.button(label="5", style=discord.ButtonStyle.primary, row=2)
-    async def button5_callback(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
-            await self.player_guess(interaction.user.id, 4)
-    
-    @discord.ui.button(label="6", style=discord.ButtonStyle.primary, row=2)
-    async def button6_callback(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
-            await self.player_guess(interaction.user.id, 5)
-
         
 
 def setup(bot: commands.Bot):
