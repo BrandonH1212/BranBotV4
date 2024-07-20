@@ -105,8 +105,9 @@ class SignUpView(discord.ui.View):
             return await interaction.response.send_message("You are not the host", ephemeral=True)
         else:
             #await interaction.response.send_message("Starting game")
-            osu_ids = game_db.get_osu_ids_from_discord(list(self.players.keys()))
-            common_sets = game_db.get_common_sets(osu_ids)
+            #osu_ids = game_db.get_osu_ids_from_discord(list(self.players.keys()))
+            #common_sets = game_db.get_common_sets([2984074])
+            common_sets = game_db.get_all_sets()
             
             print(f"Starting game with {len(common_sets)} mapsets")
             
@@ -127,7 +128,7 @@ class GameView(discord.ui.View):
         self.players = players
         self.mapsets = mapsets
         self.message = message
-        self.round = 1
+        self.round = 0
         self.max_rounds = 10
         self.state = "getting_next_map"
         self.real_index = 0
@@ -138,9 +139,8 @@ class GameView(discord.ui.View):
 
     async def button_callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        if self.state == "player_guesses" and interaction.user.id not in self.player_guesses:
-            guess = int(interaction.data['custom_id'])
-            await self.player_guess(interaction.user.id, guess)
+        guess = int(interaction.data['custom_id'])
+        await self.player_guess(interaction.user.id, guess)
             
     def create_buttons(self):
         for i in range(6):
