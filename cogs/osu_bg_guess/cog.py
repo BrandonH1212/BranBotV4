@@ -17,7 +17,7 @@ class MyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot: commands.Bot = bot
 
-    @slash_command(guild_ids=config.get_servers(), name="bg_game")
+    @slash_command(guild_ids=config.get_servers(cog_name='osu_bg_guess'), name="bg_game")
     async def bg_game(self, ctx: discord.ApplicationContext):
         view = SignUpView(self, ctx.author.id)
         await view.update_embed(ctx)
@@ -105,9 +105,9 @@ class SignUpView(discord.ui.View):
             return await interaction.response.send_message("You are not the host", ephemeral=True)
         else:
             #await interaction.response.send_message("Starting game")
-            #osu_ids = game_db.get_osu_ids_from_discord(list(self.players.keys()))
-            #common_sets = game_db.get_common_sets([2984074])
-            common_sets = game_db.get_all_sets()
+            osu_ids = game_db.get_osu_ids_from_discord(list(self.players.keys()))
+            common_sets = game_db.get_common_sets(osu_ids)
+            #common_sets = game_db.get_all_sets()
             
             print(f"Starting game with {len(common_sets)} mapsets")
             
@@ -133,8 +133,12 @@ class GameView(discord.ui.View):
         self.state = "getting_next_map"
         self.real_index = 0
         self.player_guesses = {} # {player_id: guess}
+        self.player_guess_times = {} # {player_id: time}
         self.player_points = {player_id: 0 for player_id in players}
         self.create_buttons()
+        self.round_start = time.time()
+        self.guess_time = 30
+        self.time_bonus = self.time_bonus
         
 
     async def button_callback(self, interaction: discord.Interaction):
@@ -155,18 +159,18 @@ class GameView(discord.ui.View):
             
             if self.round >= self.max_rounds:
                 max_points = max(self.player_points.values())
-                display = "\n".join([f"<@{player}>: {points} {num_emojis[self.player_guesses.get(player, -2)+1]} {'👍' if self.player_guesses.get(player, -1) == self.real_index else ''} {'👑' if points == max_points else ''}" for player, points in self.player_points.items()])
+                display = "\n".join([f"<@{player}>: {points:.4f} {num_emojis[self.player_guesses.get(player, -2)+1]} {f'👍 +{round(1 + (self.guess_time - round(self.player_guess_times[player] - self.round_start,3))*self.time_bonus/self.guess_time, 2)}' if self.player_guesses.get(player, -1) == self.real_index else ''} {'👑' if points == max_points else ''}" for player, points in self.player_points.items()])
 
             else:
-                display = "\n".join([f"<@{player}>: {points} {num_emojis[self.player_guesses.get(player, -2)+1]} {'👍' if self.player_guesses.get(player, -1) == self.real_index else ''}" for player, points in self.player_points.items()])
+                display = "\n".join([f"<@{player}>: {points:.4f} {num_emojis[self.player_guesses.get(player, -2)+1]} {f'👍 +{round(1 + (self.guess_time - round(self.player_guess_times[player] - self.round_start,3))*self.time_bonus/self.guess_time, 2)}' if self.player_guesses.get(player, -1) == self.real_index else ''}" for player, points in self.player_points.items()])
         else:
-            display = "\n".join([f"<@{player}>: {points}" for player, points in self.player_points.items()])
+            display = "\n".join([f"<@{player}>: {points:.4f}" for player, points in self.player_points.items()])
             
             
         title = "Game Over" if self.round >= self.max_rounds else f"Round {self.round}/{self.max_rounds}" if self.state == "getting_next_map" else "Showing Answers"
         
         if add_time:
-            display = f"Guessing ends {get_future_time(30)}\n" + display
+            display = f"Guessing ends {get_future_time(self.guess_time)}\n" + display
             
         embed = Embed(title=title, description=display)
         return embed
@@ -216,7 +220,9 @@ class GameView(discord.ui.View):
         
         self.state = "player_guesses"
         round = self.round
-        await asyncio.sleep((30 - (upload_end - upload_start)) + 0.5)
+        r_time = (self.guess_time - (upload_end - upload_start)) + self.time_bonus
+        self.round_start = time.time()
+        await asyncio.sleep(r_time)
         if self.round == round:
             self.state = "showing_answers"
             await self.show_answers()
@@ -227,6 +233,7 @@ class GameView(discord.ui.View):
             self.players.add(player_id)
         
         self.player_guesses[player_id] = guess
+        self.player_guess_times[player_id] = time.time()
         
         if len(self.player_guesses) == len(self.players):
             self.state = "showing_answers"
@@ -235,7 +242,6 @@ class GameView(discord.ui.View):
         return
             
     async def show_answers(self):
-        correct = 0
         self.round += 1
         for player, guess in self.player_guesses.items():
             
@@ -243,9 +249,8 @@ class GameView(discord.ui.View):
                 self.player_points[player] = 0
             
             if guess == self.real_index:
-                correct += 1
                 if player in self.player_points:
-                    self.player_points[player] += 1
+                    self.player_points[player] += round(1 + (self.guess_time - round(self.player_guess_times[player] - self.round_start,3))*self.time_bonus/self.guess_time, 2)
         
         for b in self.children:
             if b.label == str(self.real_index + 1):

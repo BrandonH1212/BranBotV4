@@ -162,3 +162,7 @@ cython_debug/
 *.wav
 *.db
 *.osz
+*.mp4
+
+
+cogs/osu_replay_roulette/danser/

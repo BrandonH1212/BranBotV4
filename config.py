@@ -38,12 +38,15 @@ class Config:
         
         return default
     
-    def get_servers(self) -> list[int]:
+    def get_servers(self, cog_name:str = 'default') -> list[int]:
         servers = []
         for preset in self.presets:
             if preset.name == self.active_preset:
                 for server in preset.servers:
                     servers.append(server)
+                        
+        if len(servers) == 0:
+            return None
                     
         return [server.serverID for server in self.servers if server.name in servers]
         
