@@ -2,7 +2,6 @@ import discord, os
 from discord.ext import commands
 from config import config
 
-config.active_preset = "test"
 
 
 class Bot(commands.Bot):
