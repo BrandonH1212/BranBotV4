@@ -10,6 +10,7 @@ import json
 import random
 import math
 from typing import Set, Dict, List, Optional, Any
+from .utilities import get_future_time, simplify_number, number_from_string
 
 
 class RRCog(commands.Cog):
@@ -29,13 +30,35 @@ class SignUpView(discord.ui.View):
         self.host: Optional[int] = host_id
         self.players: Set[int] = set()
     
-    def get_embed(self, starting:bool=False) -> Embed:
-        display: str = "\n".join([f"<@{player}>" for player in self.players])
-        
+    def get_embed(self, starting: bool = False) -> Embed:
         if starting:
-            embed: Embed = Embed(title="Game starting...", description=display)
+            title = "🎥 Replay Roulette - Game Starting!"
+            color = discord.Color.green()
         else:
-            embed: Embed = Embed(title="Sign up for the game", description=display)
+            title = "🎥 Replay Roulette - Sign Up"
+            color = discord.Color.blue()
+
+        embed = Embed(title=title, color=color)
+        
+        embed.add_field(name="How to Play", value=(
+            "1. Watch a short osu! replay clip\n"
+            "2. Guess the rank of the player\n"
+            "3. Take damage based on how far off your guess is\n"
+            "4. Last player standing wins!"
+        ), inline=False)
+        
+        embed.add_field(name="Rules", value=(
+            "• All players start with 10,000 HP\n"
+            "• Damage = How close your guess is to the real rank scaled\n"
+            "• Players are eliminated when HP reaches 0\n"
+            "• The game ends when only one player remains"
+        ), inline=False)
+        
+        player_list = "\n".join([f"<@{player}>" for player in self.players]) or "No players yet"
+        embed.add_field(name=f"👥 Players ({len(self.players)})", value=player_list, inline=False)
+        
+        embed.set_footer(text="Click 'Join' to participate | Host can click 'Start' when ready")
+        
         return embed
 
     async def update_embed(self, ctx: discord.ApplicationContext) -> None:
@@ -43,9 +66,9 @@ class SignUpView(discord.ui.View):
         if self.message:
             await self.message.edit(embed=embed, view=self)
             await ctx.response.defer()
-        elif ctx:
+        else:
             await ctx.response.send_message(embed=embed, view=self)
-            self.message = ctx.message
+            self.message = await ctx.interaction.original_response()
     
     @discord.ui.button(label="Join", style=ButtonStyle.green, custom_id="join_button")
     async def join_button_callback(self, button: discord.ui.Button, interaction: Interaction) -> None:
@@ -60,45 +83,9 @@ class SignUpView(discord.ui.View):
         if interaction.user.id != self.host:
             await interaction.response.send_message("You are not the host", ephemeral=True)
         else:
-            await interaction.response.edit_message(embed=self.get_embed(), view=None)
-            
-            
+            await interaction.response.edit_message(embed=self.get_embed(starting=True), view=None)
             game_view: GameView = GameView(self.players, self.message)
             await game_view.next_round()
-
-def get_future_time(seconds: int) -> str:
-    current_time: int = int(time.time())
-    future_time: int = current_time + seconds
-    discord_timestamp: str = f"<t:{future_time}:R>"
-    return discord_timestamp
-
-def simplify_number(number: int) -> str:
-    if number >= 1000000:
-        return f"{round(number/1000000, 2)}M"
-    elif number >= 1000:
-        return f"{round(number/1000, 2)}K"
-    else:
-        return str(number)
-    
-def number_from_string(number: str) -> Optional[int]:
-    try:
-        number = number.lower().strip()
-        number = number.replace(",", "").replace(" ", "").replace("_", "")
-        
-        multiplier: int = 1
-        if number.endswith('k'):
-            multiplier = 1000
-            number = number[:-1]
-        elif number.endswith('m'):
-            multiplier = 1000000
-            number = number[:-1]
-        
-        if '.' in number:
-            return int(float(number) * multiplier)
-        else:
-            return int(number) * multiplier
-    except:
-        return None
 
 class Player:
     def __init__(self, id: int, starting_hp: int):
@@ -137,7 +124,7 @@ class GameView(discord.ui.View):
         self.starting_hp: int = 10_000
         self.players: List[Player] = [Player(player_id, self.starting_hp) for player_id in player_ids]
         self.current_video: Optional[Dict[str, Any]] = None
-    
+        self.previous_video: Optional[Dict[str, Any]] = None
         self.videos_info: List[Dict[str, Any]] = self.get_videos_info()
     
     
@@ -162,66 +149,103 @@ class GameView(discord.ui.View):
                 "path": f"{video_directory}/{video}",
                 "rank": rank,
                 "map_id": metadata["map_id"],
-                "player_id": metadata["player_id"]
+                "mapset_id": metadata["mapset_id"],
+                "player_id": metadata["player_id"],
+                "score_id": metadata["score_id"]
             })
         random.shuffle(video_info)
         
         return video_info
-    
+        
     @discord.ui.button(label="Guess", style=ButtonStyle.primary)
     async def register_button_callback(self, button: discord.ui.Button, interaction: Interaction) -> None:
-        modal: GuessModal = GuessModal(game=self, title="Formatting 1000 1k 1_000 1,000")
+        modal: GuessModal = GuessModal(game=self)
         await interaction.response.send_modal(modal)
     
     def get_embed(self, show_guesses: bool = False, add_time: bool = False, game_over: bool = False) -> Embed:
-        if show_guesses:
-            title = 'Uploading the next video...'
-        else:
-            title = 'Guess the rank!'
-        
         if game_over:
-            title = 'Game Over!'
-            
+            title = '🏁 Game Over!'
+            color = discord.Color.gold()
+        elif show_guesses:
+            title = '🎥 Results & Next Round'
+            color = discord.Color.orange()
+        else:
+            title = '🤔 Guess the Rank!'
+            color = discord.Color.blue()
+
+        embed = Embed(title=title, color=color)
         
-        display = []
+        # Round information
+        embed.add_field(name="Round Info", value=f"Round: {self.round}", inline=False)
         
         if add_time:
-            display.append(f"Guessing ends {get_future_time(self.guess_time)}")
+            embed.add_field(name="⏳ Time Remaining", value=f"Guessing ends {get_future_time(self.guess_time)}", inline=False)
         
         if show_guesses:
-            display.append(f"***Real rank:*** `{simplify_number(self.real_rank)}`")
-            display.append(f'player(https://osu.ppy.sh/users/{self.current_video["player_id"]})')
-            display.append(f'map {self.current_video["map_id"]}')
-        
+            current_round_info = (
+                f"🎯 Actual Rank: `{simplify_number(self.real_rank)}`\n"
+                f"👤 Player: [Profile](https://osu.ppy.sh/users/{self.current_video['player_id']})\n"
+                f"🗺️ Map: [Beatmap](https://osu.ppy.sh/b/{self.current_video['map_id']})\n"
+                f"🏆 Score: [Link](https://osu.ppy.sh/scores/osu/{self.current_video['score_id']})"
+            )
+            embed.add_field(name="📊 Current Round Results", value=current_round_info, inline=False)
+    
+        # Active players
         active_players = []
-        eliminated_players = []
-        
+        max_hp = max(player.hp for player in self.players if not player.is_eliminated())
+        all_max_hp = all(player.hp == max_hp for player in self.players if not player.is_eliminated())
+
         for player in self.players:
             if not player.is_eliminated():
-                player_info = f"<@{player.id}> HP:{simplify_number(player.hp)}"
+                player_info = f"<@{player.id}> | HP: `{simplify_number(player.hp)}`"
                 if show_guesses:
                     guess_diff = player.get_damage(self.real_rank)
-                    player_info += f' - `{simplify_number(guess_diff)}` *Guessed* `{simplify_number(player.guess or 1)}`'
-                if game_over:
+                    player_info += f' | Damage: `{simplify_number(guess_diff)}` | Guessed: `{simplify_number(player.guess or 1)}`'
+                    
+                if player.hp == max_hp and not all_max_hp:
                     player_info += f" 👑"
-                
+                    
                 active_players.append(player_info)
-            else:
-                eliminated_players.append(f"<@{player.id}> :skull: eliminated round {player.eliminated_round}" + (f" - Guessed `{simplify_number(player.guess)}`" if player.guess is not None else ""))
-        
+            
         if active_players:
-            display.append("\n".join(active_players))
+            embed.add_field(name="Active Players", value="\n".join(active_players), inline=False)
+        
+        # Eliminated players
+        eliminated_players = []
+        for player in self.players:
+            if player.is_eliminated():
+                player_info = f"<@{player.id}> | Eliminated: Round {player.eliminated_round}"
+                if player.guess is not None:
+                    player_info += f" | Last Guess: `{simplify_number(player.guess)}`"
+                eliminated_players.append(player_info)
         
         if eliminated_players:
-            display.append("\n".join(eliminated_players))
+            embed.add_field(name="💀 Eliminated Players", value="\n".join(eliminated_players), inline=False)
         
-        description = "\n\n".join(display)
+        if self.previous_video and not show_guesses and not game_over:
+            prev_round_info = (
+                f"[Player](https://osu.ppy.sh/users/{self.previous_video['player_id']}) -"
+                f" [Beatmap](https://osu.ppy.sh/b/{self.previous_video['map_id']}) -"
+                f" [Score](https://osu.ppy.sh/scores/osu/{self.previous_video['score_id']})"
+            )
+            embed.add_field(name="Previous Round", value=prev_round_info, inline=False)
+
+        # Footer
+        if not game_over:
+            if show_guesses:
+                embed.set_footer(text="Next round starting soon...")
+            else:
+                embed.set_footer(text="Click 'Guess' to submit your rank guess!")
+        else:
+            embed.set_footer(text="Thanks for playing Replay Roulette!")
         
-        return Embed(title=title, description=description)
+        return embed
 
 
     async def next_round(self, update: bool = True) -> None:
-        
+        # Set the previous video before moving to the next one
+        self.previous_video = self.current_video
+
         # delete the old video
         if self.current_video:
             os.remove(self.current_video["path"])
@@ -263,12 +287,13 @@ class GameView(discord.ui.View):
                 if player.is_eliminated():
                     player.eliminate(self.round)
                     
-        if len(self.players) < 1:
+        if len(self.alive_players) < 1:
             await self.end_game()
             return
         
+        # If someone's playing solo We don't want to end the game early
         elif len(self.players) > 1 and len(self.alive_players) == 1:
-            await self.end_game(winner=self.alive_players[0])
+            await self.end_game()
             return
         
         await self.message.edit(embed=self.get_embed(show_guesses=True), view=self)
@@ -276,14 +301,35 @@ class GameView(discord.ui.View):
         self.round += 1
         await self.next_round()
 
-    async def end_game(self, winner: Optional[Player] = None) -> None:
-        await self.message.edit(embed=self.get_embed(), view=None)
+    async def end_game(self) -> None:
+        await self.message.edit(embed=self.get_embed(game_over=True), view=None)
 
 class GuessModal(discord.ui.Modal):
     def __init__(self, game: GameView, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.add_item(discord.ui.InputText(label="Input"))
+        current_round_info = f"Round {game.round}"
+        super().__init__(*args, title=f"Guess the Rank - {current_round_info}", **kwargs)
         self.gameview: GameView = game
+        
+        self.add_item(discord.ui.InputText(
+            label="Your Guess (Max rank is 300k)",
+            placeholder="10000, 10_000, 10k",
+            min_length=1,
+            max_length=10
+        ))
+        
+        formatting_explanation = (
+            "Rank Formatting Guide:\n"
+            "• Use numbers: 10000, 100000, 1000000\n"
+            "• Use k for thousands: 10k = 10,000\n"
+            "• Use m for millions: 1m = 1,000,000\n"
+            "• Spaces and commas are optional"
+        )
+        self.add_item(discord.ui.InputText(
+            label="Formatting Help",
+            value=formatting_explanation,
+            style=discord.InputTextStyle.long,
+            required=False
+        ))
 
     async def callback(self, interaction: Interaction) -> None:
         user_input: str = self.children[0].value
@@ -291,16 +337,20 @@ class GuessModal(discord.ui.Modal):
         guess: Optional[int] = number_from_string(user_input)
         
         if not guess:
-            await interaction.response.send_message(
-                f"""Gave invalid input: {user_input}
-                You can use any number formatted in the following ways
-                `10000` `10k` `10_00` `10,00`
-                `1000000` `1m` `1_000_000` `1,000,000`""", 
-                ephemeral=True
+            error_message = (
+                "Invalid input! Here are some valid examples:\n"
+                "• Numbers: 10000, 100000, 1000000\n"
+                "• With k: 10k, 100k, 999k\n"
+                "• With spaces/commas: 10,000 or 10 000\n"
+                f"You entered: {user_input}"
             )
+            await interaction.response.send_message(error_message, ephemeral=True)
             return
+
         await interaction.response.send_message(f"Your guess: `{guess}`", ephemeral=True, delete_after=5)
         await self.gameview.player_guess(interaction.user.id, guess)
-
+        
+        
+        
 def setup(bot: commands.Bot) -> None:
     bot.add_cog(RRCog(bot))
