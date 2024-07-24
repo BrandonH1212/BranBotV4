@@ -11,6 +11,7 @@ import random
 import math
 from typing import Set, Dict, List, Optional, Any
 
+
 class RRCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot: commands.Bot = bot
@@ -28,9 +29,13 @@ class SignUpView(discord.ui.View):
         self.host: Optional[int] = host_id
         self.players: Set[int] = set()
     
-    def get_embed(self) -> Embed:
+    def get_embed(self, starting:bool=False) -> Embed:
         display: str = "\n".join([f"<@{player}>" for player in self.players])
-        embed: Embed = Embed(title="Sign up for the game", description=display)
+        
+        if starting:
+            embed: Embed = Embed(title="Game starting...", description=display)
+        else:
+            embed: Embed = Embed(title="Sign up for the game", description=display)
         return embed
 
     async def update_embed(self, ctx: discord.ApplicationContext) -> None:
@@ -55,6 +60,9 @@ class SignUpView(discord.ui.View):
         if interaction.user.id != self.host:
             await interaction.response.send_message("You are not the host", ephemeral=True)
         else:
+            await interaction.response.edit_message(embed=self.get_embed(), view=None)
+            
+            
             game_view: GameView = GameView(self.players, self.message)
             await game_view.next_round()
 
@@ -91,23 +99,52 @@ def number_from_string(number: str) -> Optional[int]:
             return int(number) * multiplier
     except:
         return None
+
+class Player:
+    def __init__(self, id: int, starting_hp: int):
+        self.id: int = id
+        self.hp: int = starting_hp
+        self.guess: Optional[int] = None
+        self.eliminated_round: Optional[int] = None
+
+    def make_guess(self, guess: int) -> None:
+        self.guess = guess
+
+    def get_damage(self, real_rank: int) -> int:
+        return int(abs(math.log(self.guess or 1, 2) - math.log(real_rank, 2)) * 1000)
     
+    def take_damage(self, damage: int) -> None:
+        self.hp -= damage
+
+    def eliminate(self, round: int) -> None:
+        self.eliminated_round = round
+
+    def is_eliminated(self) -> bool:
+        return self.hp <= 0
+
+    def reset_guess(self) -> None:
+        self.guess = None
+
+
+
 class GameView(discord.ui.View):
-    def __init__(self, players: Set[int], message: discord.Message):
+    def __init__(self, player_ids: Set[int], message: discord.Message):
         super().__init__()
-        self.players: Set[int] = players
         self.message: discord.Message = message
         self.round: int = 1
         self.state: str = "getting_next_map"
         self.real_rank: int = 0
         self.starting_hp: int = 10_000
-        self.player_guesses: Dict[int, int] = {}
-        self.player_eliminated_round: Dict[int, int] = {}
-        self.player_hp: Dict[int, int] = {player_id: self.starting_hp for player_id in players}
+        self.players: List[Player] = [Player(player_id, self.starting_hp) for player_id in player_ids]
         self.current_video: Optional[Dict[str, Any]] = None
     
         self.videos_info: List[Dict[str, Any]] = self.get_videos_info()
-        
+    
+    
+    @property
+    def alive_players(self) -> List[Player]:
+        return [player for player in self.players if not player.is_eliminated()]
+    
     def get_videos_info(self) -> List[Dict[str, Any]]:
         video_directory: str = "cogs/osu_replay_roulette/videos"
         
@@ -136,77 +173,110 @@ class GameView(discord.ui.View):
         modal: GuessModal = GuessModal(game=self, title="Formatting 1000 1k 1_000 1,000")
         await interaction.response.send_modal(modal)
     
-    def get_embed(self, show_guesses: bool = False, add_time: bool = False) -> Embed:
-        title: str = 'Guess the rank!'
-        
-        display: str = ""
-        if add_time:
-            display += f"Guessing ends {get_future_time(self.guess_time)}\n" + display
-            
+    def get_embed(self, show_guesses: bool = False, add_time: bool = False, game_over: bool = False) -> Embed:
         if show_guesses:
-            display += f"***Real rank:*** `{simplify_number(self.real_rank)}`\n"
-            display += f'player(https://osu.ppy.sh/users/{self.current_video["player_id"]})\n'
-            display += f'map {self.current_video["map_id"]}\n'
             title = 'Uploading the next video...'
+        else:
+            title = 'Guess the rank!'
         
-        player_hp: Dict[int, int] = {player: hp for player, hp in self.player_hp.items()}
-        display += "\n\n".join([
-            f"<@{player}> HP:{simplify_number(hp)} {f'- `{simplify_number(abs(math.log(self.player_guesses.get(player, 1), 2) - math.log(self.real_rank, 2)) * 1000)}` *Guessed* `{simplify_number(self.player_guesses.get(player, 0))}`' if show_guesses else ''}" 
-            for player, hp in player_hp.items() if hp > 0
-        ])
-        display += "\n\n" + "\n".join([
-            f"<@{player}> :skull: eliminated round {self.player_eliminated_round.get(player, None)}" 
-            for player, hp in player_hp.items() if hp <= 0
-        ])
+        if game_over:
+            title = 'Game Over!'
             
-        embed: Embed = Embed(title=title, description=display)
-        return embed
-    
+        
+        display = []
+        
+        if add_time:
+            display.append(f"Guessing ends {get_future_time(self.guess_time)}")
+        
+        if show_guesses:
+            display.append(f"***Real rank:*** `{simplify_number(self.real_rank)}`")
+            display.append(f'player(https://osu.ppy.sh/users/{self.current_video["player_id"]})')
+            display.append(f'map {self.current_video["map_id"]}')
+        
+        active_players = []
+        eliminated_players = []
+        
+        for player in self.players:
+            if not player.is_eliminated():
+                player_info = f"<@{player.id}> HP:{simplify_number(player.hp)}"
+                if show_guesses:
+                    guess_diff = player.get_damage(self.real_rank)
+                    player_info += f' - `{simplify_number(guess_diff)}` *Guessed* `{simplify_number(player.guess or 1)}`'
+                if game_over:
+                    player_info += f" 👑"
+                
+                active_players.append(player_info)
+            else:
+                eliminated_players.append(f"<@{player.id}> :skull: eliminated round {player.eliminated_round}" + (f" - Guessed `{simplify_number(player.guess)}`" if player.guess is not None else ""))
+        
+        if active_players:
+            display.append("\n".join(active_players))
+        
+        if eliminated_players:
+            display.append("\n".join(eliminated_players))
+        
+        description = "\n\n".join(display)
+        
+        return Embed(title=title, description=description)
+
+
     async def next_round(self, update: bool = True) -> None:
+        
+        # delete the old video
+        if self.current_video:
+            os.remove(self.current_video["path"])
+            os.remove(f"{self.current_video['path'].split('.')[0]}.json")
+        
         self.current_video = self.videos_info.pop(0)
         self.real_rank = self.current_video["rank"]
         self.round_start: float = time.time()
         self.state = "getting_guesses"
         
         discord_video: File = File(self.current_video["path"], filename="video.mp4")
-        self.player_guesses.clear()
+        
+        for player in self.players:
+            player.reset_guess()
+            
         self.message.attachments.clear()
+        
         await self.message.edit(embed=self.get_embed(), view=self, file=discord_video)
     
     async def player_guess(self, player_id: int, guess: int) -> None:
-        if player_id in self.player_eliminated_round:
+        
+        player = next((p for p in self.players if p.id == player_id), Player(player_id, self.starting_hp/self.round))
+        
+        if player.is_eliminated():
             return
         
-        if player_id not in self.players:
-            self.players.add(player_id)
+        player.make_guess(guess)
         
-        self.player_guesses[player_id] = guess
-        
-        if len(self.player_guesses) >= len(self.players) - len(self.player_eliminated_round):
+        if all(p.guess is not None or p.is_eliminated() for p in self.players):
             self.state = "showing_answers"
             await self.show_answers()
         
     async def show_answers(self) -> None:
-        self.round += 1
         for player in self.players:
-            if player not in self.player_hp:
-                self.player_hp[player] = self.starting_hp // self.round
-            
-            if player in self.player_hp:
-                self.player_hp[player] -= int(abs(math.log(self.player_guesses.get(player, 1), 2) - math.log(self.real_rank, 2)) * 1000)
+            if not player.is_eliminated():
+                damage = player.get_damage(self.real_rank)
+                player.take_damage(damage)
                 
-                if self.player_hp[player] <= 0 and player not in self.player_eliminated_round:
-                    self.player_eliminated_round[player] = self.round - 1
+                if player.is_eliminated():
+                    player.eliminate(self.round)
                     
-        if len(self.player_eliminated_round) == len(self.players):
+        if len(self.players) < 1:
             await self.end_game()
+            return
+        
+        elif len(self.players) > 1 and len(self.alive_players) == 1:
+            await self.end_game(winner=self.alive_players[0])
             return
         
         await self.message.edit(embed=self.get_embed(show_guesses=True), view=self)
         await asyncio.sleep(12)
+        self.round += 1
         await self.next_round()
 
-    async def end_game(self) -> None:
+    async def end_game(self, winner: Optional[Player] = None) -> None:
         await self.message.edit(embed=self.get_embed(), view=None)
 
 class GuessModal(discord.ui.Modal):
