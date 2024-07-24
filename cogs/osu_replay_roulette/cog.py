@@ -237,7 +237,7 @@ class GameView(discord.ui.View):
             else:
                 embed.set_footer(text="Click 'Guess' to submit your rank guess!")
         else:
-            embed.set_footer(text="Thanks for playing Replay Roulette!")
+            embed.set_footer(text="Thanks for playing!")
         
         return embed
 
@@ -321,7 +321,6 @@ class GuessModal(discord.ui.Modal):
             "Rank Formatting Guide:\n"
             "• Use numbers: 10000, 100000, 1000000\n"
             "• Use k for thousands: 10k = 10,000\n"
-            "• Use m for millions: 1m = 1,000,000\n"
             "• Spaces and commas are optional"
         )
         self.add_item(discord.ui.InputText(
