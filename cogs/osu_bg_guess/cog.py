@@ -105,9 +105,9 @@ class SignUpView(discord.ui.View):
             return await interaction.response.send_message("You are not the host", ephemeral=True)
         else:
             #await interaction.response.send_message("Starting game")
-            osu_ids = game_db.get_osu_ids_from_discord(list(self.players.keys()))
-            common_sets = game_db.get_common_sets(osu_ids)
-            #common_sets = game_db.get_all_sets()
+           #osu_ids = game_db.get_osu_ids_from_discord(list(self.players.keys()))
+            #common_sets = game_db.get_common_sets(osu_ids)
+            common_sets = game_db.get_all_sets()
             
             print(f"Starting game with {len(common_sets)} mapsets")
             
@@ -138,7 +138,7 @@ class GameView(discord.ui.View):
         self.create_buttons()
         self.round_start = time.time()
         self.guess_time = 30
-        self.time_bonus = self.time_bonus
+        self.time_bonus = 0.25
         
 
     async def button_callback(self, interaction: discord.Interaction):
@@ -159,12 +159,12 @@ class GameView(discord.ui.View):
             
             if self.round >= self.max_rounds:
                 max_points = max(self.player_points.values())
-                display = "\n".join([f"<@{player}>: {points:.4f} {num_emojis[self.player_guesses.get(player, -2)+1]} {f'👍 +{round(1 + (self.guess_time - round(self.player_guess_times[player] - self.round_start,3))*self.time_bonus/self.guess_time, 2)}' if self.player_guesses.get(player, -1) == self.real_index else ''} {'👑' if points == max_points else ''}" for player, points in self.player_points.items()])
+                display = "\n".join([f"<@{player}>: {points:.2f} {num_emojis[self.player_guesses.get(player, -2)+1]} {f'👍 +{round(1 + (self.guess_time - round(self.player_guess_times[player] - self.round_start,3))*self.time_bonus/self.guess_time, 2)}' if self.player_guesses.get(player, -1) == self.real_index else ''} {'👑' if points == max_points else ''}" for player, points in self.player_points.items()])
 
             else:
-                display = "\n".join([f"<@{player}>: {points:.4f} {num_emojis[self.player_guesses.get(player, -2)+1]} {f'👍 +{round(1 + (self.guess_time - round(self.player_guess_times[player] - self.round_start,3))*self.time_bonus/self.guess_time, 2)}' if self.player_guesses.get(player, -1) == self.real_index else ''}" for player, points in self.player_points.items()])
+                display = "\n".join([f"<@{player}>: {points:.2f} {num_emojis[self.player_guesses.get(player, -2)+1]} {f'👍 +{round(1 + (self.guess_time - round(self.player_guess_times[player] - self.round_start,3))*self.time_bonus/self.guess_time, 2)}' if self.player_guesses.get(player, -1) == self.real_index else ''}" for player, points in self.player_points.items()])
         else:
-            display = "\n".join([f"<@{player}>: {points:.4f}" for player, points in self.player_points.items()])
+            display = "\n".join([f"<@{player}>: {points:.2f}" for player, points in self.player_points.items()])
             
             
         title = "Game Over" if self.round >= self.max_rounds else f"Round {self.round}/{self.max_rounds}" if self.state == "getting_next_map" else "Showing Answers"
