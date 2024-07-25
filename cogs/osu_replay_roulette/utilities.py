@@ -29,8 +29,14 @@ def number_from_string(number: str) -> Optional[int]:
             number = number[:-1]
         
         if '.' in number:
+            result = float(number) * multiplier
+            if result < 1:
+                return None
             return int(float(number) * multiplier)
         else:
+            result = int(number) * multiplier
+            if result < 1:
+                return None
             return int(number) * multiplier
     except:
         return None

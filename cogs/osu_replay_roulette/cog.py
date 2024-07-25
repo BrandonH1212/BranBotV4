@@ -20,6 +20,7 @@ class RRCog(commands.Cog):
     @slash_command(guild_ids=config.get_servers(), name="replay_roulette")
     async def replay_roulette(self, ctx: discord.ApplicationContext) -> None:
         view: SignUpView = SignUpView(self, ctx.author.id)
+        view.players.add(ctx.author.id)
         await view.update_embed(ctx)
 
 class SignUpView(discord.ui.View):
@@ -39,20 +40,6 @@ class SignUpView(discord.ui.View):
             color = discord.Color.blue()
 
         embed = Embed(title=title, color=color)
-        
-        embed.add_field(name="How to Play", value=(
-            "1. Watch a short osu! replay clip\n"
-            "2. Guess the rank of the player\n"
-            "3. Take damage based on how far off your guess is\n"
-            "4. Last player standing wins!"
-        ), inline=False)
-        
-        embed.add_field(name="Rules", value=(
-            "• All players start with 10,000 HP\n"
-            "• Damage = How close your guess is to the real rank scaled\n"
-            "• Players are eliminated when HP reaches 0\n"
-            "• The game ends when only one player remains"
-        ), inline=False)
         
         player_list = "\n".join([f"<@{player}>" for player in self.players]) or "No players yet"
         embed.add_field(name=f"👥 Players ({len(self.players)})", value=player_list, inline=False)
@@ -86,6 +73,25 @@ class SignUpView(discord.ui.View):
             await interaction.response.edit_message(embed=self.get_embed(starting=True), view=None)
             game_view: GameView = GameView(self.players, self.message)
             await game_view.next_round()
+            
+    @discord.ui.button(label="📝 How to Play", style=ButtonStyle.gray)
+    async def rules_button_callback(self, button: discord.ui.Button, interaction: Interaction) -> None:
+        embed = Embed(title="Rules", color=discord.Color.dark_gray())
+        embed.add_field(name="📝 How to Play", value=(
+            "1. Watch a osu! clip\n"
+            "2. Guess the player's rank\n"
+            "3. You take more damage the further your guess is\n"
+            "4. Last player standing wins!"
+        ), inline=False)
+        
+        embed.add_field(name="🔢 Game Rules", value=(
+            "• All players start with 10,000 HP\n"
+            "• Damage = sqrt(round_num) * 1000) * |log2(guess) - log2(real_rank)|\n"
+            "• Players are eliminated when HP reaches 0\n"
+            "• The game ends when only one player remains"
+        ), inline=False)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class Player:
     def __init__(self, id: int, starting_hp: int):
@@ -97,8 +103,8 @@ class Player:
     def make_guess(self, guess: int) -> None:
         self.guess = guess
 
-    def get_damage(self, real_rank: int) -> int:
-        return int(abs(math.log(self.guess or 1, 2) - math.log(real_rank, 2)) * 1000)
+    def get_damage(self, real_rank: int, round:int) -> int:
+        return int(abs(math.log(self.guess or 1, 2) - math.log(real_rank, 2)) * (1000 * math.sqrt(round)))
     
     def take_damage(self, damage: int) -> None:
         self.hp -= damage
@@ -169,7 +175,9 @@ class GameView(discord.ui.View):
         elif show_guesses:
             title = '🎥 Results & Next Round'
             color = discord.Color.orange()
+            self.children[0].disabled = True
         else:
+            self.children[0].disabled = False
             title = '🤔 Guess the Rank!'
             color = discord.Color.blue()
 
@@ -181,7 +189,7 @@ class GameView(discord.ui.View):
         if add_time:
             embed.add_field(name="⏳ Time Remaining", value=f"Guessing ends {get_future_time(self.guess_time)}", inline=False)
         
-        if show_guesses:
+        if show_guesses or game_over:
             current_round_info = (
                 f"🎯 Actual Rank: `{simplify_number(self.real_rank)}`\n"
                 f"👤 Player: [Profile](https://osu.ppy.sh/users/{self.current_video['player_id']})\n"
@@ -192,18 +200,25 @@ class GameView(discord.ui.View):
     
         # Active players
         active_players = []
-        max_hp = max(player.hp for player in self.players if not player.is_eliminated())
-        all_max_hp = all(player.hp == max_hp for player in self.players if not player.is_eliminated())
+        
+        alive_players = self.alive_players
+        
+        if len(alive_players) > 0:
+            lowest_damage = min(player.get_damage(self.real_rank, self.round) for player in alive_players)
+        else:
+            lowest_damage = 0
 
+        self.players.sort(key=lambda p: p.hp, reverse=True)
+        
         for player in self.players:
             if not player.is_eliminated():
                 player_info = f"<@{player.id}> | HP: `{simplify_number(player.hp)}`"
-                if show_guesses:
-                    guess_diff = player.get_damage(self.real_rank)
-                    player_info += f' | Damage: `{simplify_number(guess_diff)}` | Guessed: `{simplify_number(player.guess or 1)}`'
+                if show_guesses or game_over:
+                    damage = player.get_damage(self.real_rank, self.round)
+                    player_info += f' | Damage: `{simplify_number(damage)}` | Guessed: `{simplify_number(player.guess or 1)}`'
                     
-                if player.hp == max_hp and not all_max_hp:
-                    player_info += f" 👑"
+                    if damage == lowest_damage:
+                        player_info += f" 👑"
                     
                 active_players.append(player_info)
             
@@ -216,13 +231,13 @@ class GameView(discord.ui.View):
             if player.is_eliminated():
                 player_info = f"<@{player.id}> | Eliminated: Round {player.eliminated_round}"
                 if player.guess is not None:
-                    player_info += f" | Last Guess: `{simplify_number(player.guess)}`"
+                    player_info += f"| HP: `{simplify_number(player.hp)}` | Last Guess: `{simplify_number(player.guess)}`"
                 eliminated_players.append(player_info)
         
         if eliminated_players:
             embed.add_field(name="💀 Eliminated Players", value="\n".join(eliminated_players), inline=False)
         
-        if self.previous_video and not show_guesses and not game_over:
+        if self.previous_video and not show_guesses or game_over:
             prev_round_info = (
                 f"[Player](https://osu.ppy.sh/users/{self.previous_video['player_id']}) -"
                 f" [Beatmap](https://osu.ppy.sh/b/{self.previous_video['map_id']}) -"
@@ -265,6 +280,7 @@ class GameView(discord.ui.View):
         
         await self.message.edit(embed=self.get_embed(), view=self, file=discord_video)
     
+    
     async def player_guess(self, player_id: int, guess: int) -> None:
         
         player = next((p for p in self.players if p.id == player_id), Player(player_id, self.starting_hp/self.round))
@@ -278,10 +294,11 @@ class GameView(discord.ui.View):
             self.state = "showing_answers"
             await self.show_answers()
         
+        
     async def show_answers(self) -> None:
         for player in self.players:
             if not player.is_eliminated():
-                damage = player.get_damage(self.real_rank)
+                damage = player.get_damage(self.real_rank, self.round)
                 player.take_damage(damage)
                 
                 if player.is_eliminated():
@@ -318,7 +335,6 @@ class GuessModal(discord.ui.Modal):
         ))
         
         formatting_explanation = (
-            "Rank Formatting Guide:\n"
             "• Use numbers: 10000, 100000, 1000000\n"
             "• Use k for thousands: 10k = 10,000\n"
             "• Spaces and commas are optional"
