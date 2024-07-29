@@ -231,7 +231,7 @@ class GameView(discord.ui.View):
             if player.is_eliminated():
                 player_info = f"<@{player.id}> | Eliminated: Round {player.eliminated_round}"
                 if player.guess is not None:
-                    player_info += f"| HP: `{simplify_number(player.hp)}` | Last Guess: `{simplify_number(player.guess)}`"
+                    player_info += f" | HP: `{simplify_number(player.hp)}` | Last Guess: `{simplify_number(player.guess)}`"
                 eliminated_players.append(player_info)
         
         if eliminated_players:

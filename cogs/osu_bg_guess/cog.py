@@ -8,7 +8,6 @@ import random
 import asyncio
 import time
 from typing import Dict, List, Set, Tuple, Optional
-
 from . import game_db, BgGameDatabase, get_image_grid, get_preview
 
 class MyCog(commands.Cog):
@@ -96,8 +95,10 @@ class SignUpView(discord.ui.View):
         if interaction.user.id != self.host:
             await interaction.response.send_message("You are not the host", ephemeral=True)
         else:
-            common_sets: List[int] = game_db.get_all_sets()
             
+            #common_sets: List[int] = game_db.get_all_sets()
+            osu_ids: List[int] = game_db.get_osu_ids_from_discord(list(self.players.keys()))
+            common_sets: List[int] = game_db.get_common_sets(osu_ids)
             print(f"Starting game with {len(common_sets)} mapsets")
             
             game_view = GameView(set(self.players.keys()), common_sets, self.message)
